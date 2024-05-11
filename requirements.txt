@@ -1,0 +1,5 @@
+pandas
+solara
+openpyxl
+pypinyin
+numpy
