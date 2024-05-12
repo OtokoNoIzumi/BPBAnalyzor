@@ -431,7 +431,7 @@ def Contact_Me():
             discord: izumi.qu#5605
             
             Wechat: aiding0905""")
-            solara.Image('art_code.png',width='170px')
+            solara.Image('Image/art_code.png',width='170px')
             # label=language_dict.value.get('UI_DonateInfo')
             solara.Text(language_dict.value.get('UI_DonateInfo'))
                 # solara.Image('art_Reaper.png',width='170px')
@@ -1114,6 +1114,7 @@ def BPB_Record():
                         on_file=lambda file_info: handle_file(file_info, dfroundbaseinfo),
                         lazy=False,  # We will only read the first 100 bytes
                     )
+            image_folder_path='Image/'
             imagelist=['art_Reaper','art_Pyromancer','art_Berserker','art_Ranger']
             videotitle_list=['彩虹女巫锅','6百冰冰法彩黏','2万甲白狼头领战','一瞬千击！大象匕首战']
             videourl_list=['https://www.bilibili.com/video/BV18w4m197BW','https://www.bilibili.com/video/BV1QH4y1A7jD','https://www.bilibili.com/video/BV12Z421n75G','https://www.bilibili.com/video/BV1ST421S7Ym']
@@ -1123,7 +1124,7 @@ def BPB_Record():
 
                 for detail_image,detail_title,detail_url in totalinfo:
                     with solara.Div():
-                        solara.Image(detail_image+'.png')
+                        solara.Image(image_folder_path+detail_image+'.png')
                         # solara.Text(detail_title)
                         if detail_url!='':
                             solara.Button(label=f"观看视频：{detail_title}", icon_name="mdi-file-video", attributes={"href": detail_url, "target": "_blank"}, text=True, outlined=True) 
