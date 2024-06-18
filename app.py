@@ -4,10 +4,51 @@ import numpy as np
 import solara
 from solara import reactive
 from solara.alias import rv
-from Module import Common
+import Common
 import re
 import pypinyin
 from typing import Any, Dict, Optional, cast
+
+import random
+
+def simulate_attempts(event_requirements, trials_per_attempt=5, num_simulations=10000):
+    """
+    使用蒙特卡洛模拟,计算期望至少需要多少次'trials_per_attempt次事件'才能满足所有事件要求。
+
+    参数:
+    event_requirements (list): 一个列表,每个元素是一个列表[事件id, 概率, 需要达成的次数]
+    trials_per_attempt (int): 每一次'attempts'包含的独立试验次数,默认为5
+    num_simulations (int): 模拟的总实验次数,默认为10000
+
+    返回:
+    期望所需的最小'attempts'次数
+    """
+    if len(event_requirements)==0:
+        expected_attempts=0
+    elif len(event_requirements)==1:
+        prob=event_requirements[0][1]
+        expected_attempts = 1/prob/trials_per_attempt
+        #对于1的情况，不用模拟，直接计算期望值
+    else:
+        attempts_counts = []
+        for _ in range(num_simulations):
+            event_counts = {req[0]: 0 for req in event_requirements}
+            attempts = 0
+            while True:
+                attempts += 1
+                
+                for event_id, prob, _ in event_requirements:
+                    if random.random() < (1-(1-prob) ** (trials_per_attempt)):
+                        event_counts[event_id] += 1
+                        
+                if all(event_counts[event_id] >= req[2] for event_id, req in zip(event_counts, event_requirements)):
+                    break
+            attempts_counts.append(attempts)
+    
+        expected_attempts = sum(attempts_counts) / num_simulations
+
+    return expected_attempts
+
 
 def get_pinyin_with_char(text):
     pinyins = pypinyin.lazy_pinyin(text, style=pypinyin.NORMAL)
@@ -110,7 +151,7 @@ def generate_actual_rate(gameround=1,class_selected='',ignorefilter='',unlock_se
     final_item_count=final_item.groupby('稀有度')['稀有度'].count()
     final_item_count.columns=['数量']
     if debugmode:
-        print(f'line{beginline+21}',final_item.shape[0],final_item_count,list(final_item[df_cl_ItemName]))
+        print(f'line{beginline+21}',final_item.shape[0],final_item_count,list(final_item[df_cl_ItemName]))#这里还没过filter的筛选。到底是没有结果，还是被筛选掉了呢？先做一个过滤的预检测，如果预检测就没结果，后面也就不用算了。预检测有结果，就只有可能是被不同回合的品质给过滤了。
     intersection_list = list(set(ratiocal_columns) & set(dfroundinfo.columns.tolist()))
     ratioinfo=dfroundinfo[dfroundinfo['回合']==gameround][intersection_list]#.copy()
     #根据回合数生成字典和对应的权重，并过滤掉没有概率的东西
@@ -120,7 +161,7 @@ def generate_actual_rate(gameround=1,class_selected='',ignorefilter='',unlock_se
         print(f'line{beginline+28}',final_item.shape[0],rarity_map,count_map)
     final_item['weight'] = final_item['稀有度'].map(rarity_map).fillna(0)
     final_item['count'] = final_item['稀有度'].map(count_map).fillna(0)
-    final_item=final_item[final_item['weight']>0]
+    final_item=final_item[final_item['weight']>0]#这个地方的过滤就是要控制和优化的地方，#如果先不过滤，最后过滤，不就可以了？
     final_item.loc[final_item[translation_dict.get_text('dfname_Unlockitem')]=='宝石盒','weight']/=5
     totalweight=final_item['weight'].sum()
     final_item[df_cl_Chance]=final_item['weight']/final_item['count']*(5-min(5,max(0,locked_num)))
@@ -159,7 +200,7 @@ def generate_actual_rate(gameround=1,class_selected='',ignorefilter='',unlock_se
         result_df=final_item[[df_cl_ItemName,df_cl_Rarity,df_cl_Chance,'物品id']].copy()
         if bfiltered:
             label=language_dict.value.get('UI_shop_setting_format_filter','筛选后总概率')
-            final_extra_text=f', {label}:{totalweight}%'
+            final_extra_text=f'{label}:{totalweight}%'
             if totalweight==0:                
                 final_extra_text=language_dict.value.get('UI_Filter_zero_hint',', 请检查筛选或回合数，可能这回合没这个品质。')
             #额外计算期总期望和单品期望
@@ -192,6 +233,40 @@ def generate_actual_rate(gameround=1,class_selected='',ignorefilter='',unlock_se
                 expected_price_for_search=100/totalweight
                 label=language_dict.value.get('UI_shop_ExpectSearchCost','另外搜到期望花费')
                 final_extra_text+=f', {label}:{round(expected_price_for_search,1)}'
+                #这里要做一个判断，如果数量小于等于3，就做刚才的验算
+                if final_item.shape[0]<=3:
+                    requirements_list1 = [[row[df_cl_ItemName], row[df_cl_Chance]/500, 1] for _, row in result_df[[df_cl_ItemName, df_cl_Chance]].iterrows()]
+                    label=language_dict.value.get('UI_shop_ExpectCrossSearchCost','找到全部道具的期望花费')
+                    expected_price_for_cross_search1=simulate_attempts(requirements_list1)
+                    # print(requirements_list1,expected_price_for_cross_search)
+                    final_extra_text+=f', {label}:{round(expected_price_for_cross_search1,1)}'
+                    if df_cl_Chance+'_next' in result_df.columns.tolist():
+                        requirements_list2 = [[row[df_cl_ItemName], row[df_cl_Chance+'_next']/500, 1] for _, row in result_df[[df_cl_ItemName, df_cl_Chance+'_next']].iterrows()]
+                        label=language_dict.value.get('UI_shop_ExpectCrossSearchCost_Next','下回合找到全部道具的期望花费')
+                        expected_price_for_cross_search2=simulate_attempts(requirements_list2)
+                        final_extra_text+=f', {label}:{round(expected_price_for_cross_search2,2)}'
+                    # print(final_item)
+                    # 计算每个刷出道具的价值
+                    def generate_requirements(row, col_name, col_prob):
+                        """
+                        为给定的DataFrame行生成除自身之外的requirements_list。
+                    
+                        参数:
+                        row (pd.Series): DataFrame中的一行
+                        col_name (str): 名称列的列名
+                        col_prob (str): 概率列的列名
+                    
+                        返回:
+                        requirements_list (list): 除自身之外的requirements_list
+                        """
+                        name = row[col_name]
+                        prob = row[col_prob]
+                        requirements_list = [[other_name, other_prob/500, 1] for other_name, other_prob in zip(result_df[col_name], result_df[col_prob]) if other_name != name]
+                        # print(name,requirements_list)
+                        return requirements_list
+                    label=language_dict.value.get('UI_shop_ExpectCrossSearchCostWithoutItem','刷到道具对于凑齐全需求道具的价值')
+                    result_df[label]=result_df.apply(lambda row: round(expected_price_for_cross_search1-simulate_attempts(generate_requirements(row, df_cl_ItemName, df_cl_Chance)),2), axis=1)
+                    
             final_bag_text=''
             if not(bagcheck.empty):                
                 result_df[language_dict.value.get('dfname_Bagslots')]=final_item['核心参数值'].astype(int)
@@ -235,12 +310,12 @@ def generate_actual_rate(gameround=1,class_selected='',ignorefilter='',unlock_se
     if debugmode:
         print(f'line{beginline+144}',shop_display_result)
     return result
-
+    
 
 #公共设置开关
 print_mode=False
 language = reactive('zh')  # 默认语言设置为中文
-version=' v0.9.7b0511    '
+version=' v0.9.8b0610    '
 
 #维护一个翻译对应的字典，再从字典处理成更方便切换的最终字典。
 translation_dict=Common.TranslationDict()#这个是我自己做的方法。。。差点忘记了，看来类封装真的很不错！
@@ -249,7 +324,8 @@ translation_dict=Common.TranslationDict()#这个是我自己做的方法。。�
 #一段内容一段内容处理完，不要穿插
 #加载所有数据表，先不重新命名
 
-FileNameKey='Data/Project_BPB_'
+FileNameKey='Project_BPB_'
+#FileNameKey='Project_BPB/Data/Project_BPB_'
 itemdata_path=FileNameKey+'Itemdata.xlsx'#0.9.7，来自飞书文档
 dfitem=pd.read_excel(itemdata_path).fillna('')
 dfitem.loc[dfitem['核心参数值']=='','核心参数值']=0
@@ -431,7 +507,7 @@ def Contact_Me():
             discord: izumi.qu#5605
             
             Wechat: aiding0905""")
-            solara.Image('Image/art_code.png',width='170px')
+            solara.Image('art_code.png',width='170px')
             # label=language_dict.value.get('UI_DonateInfo')
             solara.Text(language_dict.value.get('UI_DonateInfo'))
                 # solara.Image('art_Reaper.png',width='170px')
@@ -496,7 +572,7 @@ def BPB_Analyze():
     if hero.value:
         label=language_dict.value.get('UI_shop_setting_format_class',"选择职业")
         select_output+=f', {label}: {hero.value}'
-    select_output+=extra_hint.value
+    # select_output+=extra_hint.value
     if initialing.value:
         modirate_round()
         initialing.value=False
@@ -506,6 +582,7 @@ def BPB_Analyze():
 #         with solara.Card(title='结果信息'):
         with solara.Column():
             solara.Markdown(select_output)#,[1,18]) 
+            solara.Markdown(extra_hint.value)#,[1,18]) 
             solara.Markdown(bag_extra_hint.value)#,[1,18]) 
         # rv.Img(src='Reaper.png', contain=True, max_height="200px")
 #     with solara.Card():
@@ -516,12 +593,18 @@ def BPB_Analyze():
 #         solara.Link("比特币捐赠", href="bitcoin:YOUR_BTC_ADDRESS"),
 #         solara.Markdown("#### 所有捐赠将用于项目的持续开发和服务器运营,衷心感谢您的支持!")
 #     solara.Info(select_output)#,[1,18]) 
+#BPB_Analyze()
+# 
+#徽章职业虽然是2级，但或许点两下……？
+#过滤条件加上预设的高频标签，也就是默认选中道具名，可以改标签，也可以自己打——这个只是补充分列的第一个。
+#不要硬搜，或者不要错过
+#侧边栏？
 
 
 # 可以做一个自动加载和重置，两套数据解决，增加一个重置按钮
 latestround=dfroundbaseinfo.iloc[-1]
 default_key=latestround.keys()
-maxrecord=dfroundbaseinfo['对局id'].max()
+maxrecord=dfroundbaseinfo['对局id'].max()+1
 default_value=[maxrecord,'高胜的一局',1,11,True,'',14,1,'',6,17]
 defaultsetting=dict(zip(default_key,default_value))
 # defaultsetting={
@@ -1114,7 +1197,6 @@ def BPB_Record():
                         on_file=lambda file_info: handle_file(file_info, dfroundbaseinfo),
                         lazy=False,  # We will only read the first 100 bytes
                     )
-            image_folder_path='Image/'
             imagelist=['art_Reaper','art_Pyromancer','art_Berserker','art_Ranger']
             videotitle_list=['彩虹女巫锅','6百冰冰法彩黏','2万甲白狼头领战','一瞬千击！大象匕首战']
             videourl_list=['https://www.bilibili.com/video/BV18w4m197BW','https://www.bilibili.com/video/BV1QH4y1A7jD','https://www.bilibili.com/video/BV12Z421n75G','https://www.bilibili.com/video/BV1ST421S7Ym']
@@ -1124,7 +1206,7 @@ def BPB_Record():
 
                 for detail_image,detail_title,detail_url in totalinfo:
                     with solara.Div():
-                        solara.Image(image_folder_path+detail_image+'.png')
+                        solara.Image(detail_image+'.png')
                         # solara.Text(detail_title)
                         if detail_url!='':
                             solara.Button(label=f"观看视频：{detail_title}", icon_name="mdi-file-video", attributes={"href": detail_url, "target": "_blank"}, text=True, outlined=True) 
